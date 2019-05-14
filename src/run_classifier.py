@@ -485,49 +485,44 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings):
+class BertTextClassifier(tf.keras.Model):
     """Creates a classification model."""
-    model = modeling.BertModel(
-        config=bert_config,
-        is_training=is_training,
-        input_ids=input_ids,
-        input_mask=input_mask,
-        token_type_ids=segment_ids,
-        use_one_hot_embeddings=use_one_hot_embeddings)
 
-    # In the demo, we are doing a simple classification task on the entire
-    # segment.
+    def __init__(self, bert_config, is_training,
+                 labels, num_labels, use_one_hot_embeddings):
+        super(BertTextClassifier, self).__init__()
+
+        self.bert_model = modeling.BertModel(
+            config=bert_config,
+            is_training=is_training,
+            use_one_hot_embeddings=use_one_hot_embeddings, batch_size=16, seq_length=30)
+
+        self.dropout = tf.keras.layers.Dropout(0.5)
+        self.dense = tf.keras.layers.Dense(num_labels, activation=tf.nn.softmax)
+
+    def call(self, inputs):
+        # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
+        x = self.bert_model(inputs)
+        return self.dense(x)
+
+
+        # with tf.variable_scope("loss"):
+        #     if is_training:
+        # I.e., 0.1
+        # dropout
+        # output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
     #
-    # If you want to use the token-level output, use model.get_sequence_output()
-    # instead.
-    output_layer = model.get_pooled_output()
-
-    hidden_size = output_layer.shape[-1].value
-
-    output_weights = tf.get_variable(
-        "output_weights", [num_labels, hidden_size],
-        initializer=tf.truncated_normal_initializer(stddev=0.02))
-
-    output_bias = tf.get_variable(
-        "output_bias", [num_labels], initializer=tf.zeros_initializer())
-
-    with tf.variable_scope("loss"):
-        if is_training:
-            # I.e., 0.1 dropout
-            output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
-
-        logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-        logits = tf.nn.bias_add(logits, output_bias)
-        probabilities = tf.nn.softmax(logits, axis=-1)
-        log_probs = tf.nn.log_softmax(logits, axis=-1)
-
-        one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
-
-        per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-        loss = tf.reduce_mean(per_example_loss)
-
-        return (loss, per_example_loss, logits, probabilities)
+    # logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+    # logits = tf.nn.bias_add(logits, output_bias)
+    # probabilities = tf.nn.softmax(logits, axis=-1)
+    # log_probs = tf.nn.log_softmax(logits, axis=-1)
+    #
+    # one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+    #
+    # per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
+    # loss = tf.reduce_mean(per_example_loss)
+    #
+    # return (loss, per_example_loss, logits, probabilities)
 
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
@@ -537,7 +532,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
         """The `model_fn` for TPUEstimator."""
-
 
         input_ids = features["input_ids"]
         input_mask = features["input_mask"]
@@ -723,43 +717,50 @@ def main():
     #                                 inter_op_parallelism_threads=3)
     # session_config.gpu_options.allow_growth = True
 
-    run_config = tf.estimator.RunConfig(
-        # session_config=session_config,
-        model_dir=FLAGS.output_dir,
-        save_checkpoints_steps=FLAGS.save_checkpoints_steps)
+    # run_config = tf.estimator.RunConfig(
+    #     session_config=session_config,
+        # model_dir=FLAGS.output_dir,
+        # save_checkpoints_steps=FLAGS.save_checkpoints_steps)
 
     train_examples = processor.get_train_examples(FLAGS.data_dir)
     num_train_steps = int(
         len(train_examples) / FLAGS.batch_size * FLAGS.train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
-    model_fn = model_fn_builder(
-        bert_config=bert_config,
-        num_labels=len(label_list),
-        init_checkpoint=FLAGS.init_checkpoint,
-        learning_rate=FLAGS.learning_rate,
-        num_train_steps=num_train_steps,
-        num_warmup_steps=num_warmup_steps,
-        use_tpu=False,
-        use_one_hot_embeddings=False)
+    bert = BertTextClassifier(bert_config=bert_config,
+                              is_training=True,
+                              num_labels=len(label_list),
+                              labels=label_list,
+                              use_one_hot_embeddings=False)
+
+
+    # model_fn = model_fn_builder(
+    #     bert_config=bert_config,
+    #     num_labels=len(label_list),
+    #     init_checkpoint=FLAGS.init_checkpoint,
+    #     learning_rate=FLAGS.learning_rate,
+    #     num_train_steps=num_train_steps,
+    #     num_warmup_steps=num_warmup_steps,
+    #     use_tpu=False,
+    #     use_one_hot_embeddings=False)
+
 
     # If TPU is not available, this will fall back to normal Estimator on CPU
     # or GPU.
-    estimator = tf.estimator.Estimator(
-        model_fn=model_fn,
-        config=run_config)
+    # estimator = tf.estimator.Estimator(
+    #     model_fn=model_fn,
+    #     config=run_config)
 
     train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
     file_based_convert_examples_to_features(
         train_examples, label_list, FLAGS.max_seq_length, tokenizer, train_file)
-    train_input_fn = file_based_input_fn_builder(
-        input_file=train_file,
-        seq_length=FLAGS.max_seq_length,
-        is_training=True,
-        drop_remainder=True)
+    # train_input_fn = file_based_input_fn_builder(
+    #     input_file=train_file,
+    #     seq_length=FLAGS.max_seq_length,
+    #     is_training=True,
+    #     drop_remainder=True)
 
-    estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
-
+    # estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
 
 
 if __name__ == "__main__":

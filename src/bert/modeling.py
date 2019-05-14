@@ -85,161 +85,135 @@ class BertConfig(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-class BertModel(object):
-    """BERT model ("Bidirectional Encoder Representations from Transformers").
+class BertEmbeddings(tf.keras.Model):
+    """Perform embedding lookup on the word ids."""
 
-    Example usage:
+    def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
+                 hidden_dropout_prob, max_position_embeddings, **kwargs):
+        super(BertEmbeddings, self).__init__()
+        self._vocab_size = vocab_size
+        self._hidden_size = hidden_size
+        self._initializer_range = initializer_range
+        self._use_one_hot_embeddings = use_one_hot_embeddings
+        self._type_vocab_size = type_vocab_size
+        self._hidden_dropout_prob = hidden_dropout_prob
+        self._max_position_embeddings = max_position_embeddings
 
-    ```python
-    # Already been converted into WordPiece token ids
-    input_ids = tf.constant([[31, 51, 99], [15, 5, 0]])
-    input_mask = tf.constant([[1, 1, 1], [1, 1, 0]])
-    token_type_ids = tf.constant([[0, 0, 1], [0, 2, 0]])
+    def call(self, inputs):
+        input_ids = inputs[0]
+        token_type_ids = inputs[1]
 
-    config = modeling.BertConfig(vocab_size=32000, hidden_size=512,
-      num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+        embedding_output, embedding_table = embedding_lookup(
+            input_ids=input_ids,
+            vocab_size=self._vocab_size,
+            embedding_size=self._hidden_size,
+            initializer_range=self._initializer_range,
+            word_embedding_name="word_embeddings",
+            use_one_hot_embeddings=self._use_one_hot_embeddings)
 
-    model = modeling.BertModel(config=config, is_training=True,
-      input_ids=input_ids, input_mask=input_mask, token_type_ids=token_type_ids)
+        embedding_output = embedding_postprocessor(
+            input_tensor=embedding_output,
+            use_token_type=True,
+            token_type_ids=token_type_ids,
+            token_type_vocab_size=self._type_vocab_size,
+            token_type_embedding_name="token_type_embeddings",
+            use_position_embeddings=True,
+            position_embedding_name="position_embeddings",
+            initializer_range=self._initializer_range,
+            max_position_embeddings=self._max_position_embeddings,
+            dropout_prob=self._hidden_dropout_prob)
 
-    label_embeddings = tf.get_variable(...)
-    pooled_output = model.get_pooled_output()
-    logits = tf.matmul(pooled_output, label_embeddings)
-    ...
-    ```
-    """
+        return embedding_output
+
+
+class BertEncoder(tf.keras.Model):
+    def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
+                 hidden_dropout_prob, max_position_embeddings, **kwargs):
+        super(BertEncoder, self).__init__()
+        self._vocab_size = vocab_size
+        self._hidden_size = hidden_size
+        self._initializer_range = initializer_range
+        self._use_one_hot_embeddings = use_one_hot_embeddings
+        self._type_vocab_size = type_vocab_size
+        self._hidden_dropout_prob = hidden_dropout_prob
+        self._max_position_embeddings = max_position_embeddings
+
+    def call(self, inputs):
+        input_ids = inputs[0]
+        input_mask = inputs[1]
+        attention_mask = create_attention_mask_from_input_mask(
+            input_ids, input_mask)
+
+        # Run the stacked transformer.
+        # `sequence_output` shape = [batch_size, seq_length, hidden_size].
+        all_encoder_layers = transformer_model(
+            input_tensor=self.embedding_output,
+            attention_mask=attention_mask,
+            hidden_size=self._hidden_size,
+            num_hidden_layers=self.num_hidden_layers,
+            num_attention_heads=self._num_attention_heads,
+            intermediate_size=self._intermediate_size,
+            intermediate_act_fn=get_activation(self._hidden_act),
+            hidden_dropout_prob=self._hidden_dropout_prob,
+            attention_probs_dropout_prob=self._attention_probs_dropout_prob,
+            initializer_range=self._initializer_range,
+            do_return_all_layers=True)
+
+        return all_encoder_layers
+
+
+class BertPooler(tf.keras.Model):
+    def __init__(self, hidden_size, initializer_range, **kwargs):
+        super(BertPooler, self).__init__()
+        self._hidden_size = hidden_size
+        self._initializer_range = initializer_range
+
+    def call(self, inputs):
+        first_token_tensor = tf.squeeze(inputs[:, 0:1, :], axis=1)
+        pooled_output = tf.keras.Dense(
+            first_token_tensor,
+            self._hidden_size,
+            activation=tf.tanh,
+            kernel_initializer=create_initializer(self._initializer_range))
+        return pooled_output
+
+
+class BertModel(tf.keras.Model):
+    """BERT model ("Bidirectional Encoder Representations from Transformers")."""
 
     def __init__(self,
                  config,
                  is_training,
-                 input_ids,
-                 input_mask=None,
-                 token_type_ids=None,
-                 use_one_hot_embeddings=False,
-                 scope=None):
-        """Constructor for BertModel.
-
-        Args:
-          config: `BertConfig` instance.
-          is_training: bool. true for training model, false for eval model. Controls
-            whether dropout will be applied.
-          input_ids: int32 Tensor of shape [batch_size, seq_length].
-          input_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
-          token_type_ids: (optional) int32 Tensor of shape [batch_size, seq_length].
-          use_one_hot_embeddings: (optional) bool. Whether to use one-hot word
-            embeddings or tf.embedding_lookup() for the word embeddings.
-          scope: (optional) variable scope. Defaults to "bert".
-
-        Raises:
-          ValueError: The config is invalid or one of the input tensor shapes
-            is invalid.
-        """
+                 batch_size,
+                 seq_length,
+                 use_one_hot_embeddings=False):
+        super(BertModel, self).__init__()
         config = copy.deepcopy(config)
         if not is_training:
             config.hidden_dropout_prob = 0.0
             config.attention_probs_dropout_prob = 0.0
 
-        input_shape = get_shape_list(input_ids, expected_rank=2)
-        batch_size = input_shape[0]
-        seq_length = input_shape[1]
+        self._batch_size = batch_size
+        self._seq_length = seq_length
+
+        self.embeddings = BertEmbeddings(use_one_hot_embeddings=use_one_hot_embeddings, **config.__dict__)
+        self.encoder = BertEncoder(use_one_hot_embeddings=use_one_hot_embeddings, **config.__dict__)
+        self.pooler = BertPooler(**config.__dict__)
+
+    def call(self, inputs):
+        input_ids = inputs[0]
+        input_mask = inputs[1]
+        token_type_ids = inputs[2]
 
         if input_mask is None:
-            input_mask = tf.ones(shape=[batch_size, seq_length], dtype=tf.int32)
+            input_mask = tf.ones(shape=[self._batch_size, self._seq_length], dtype=tf.int32)
 
         if token_type_ids is None:
-            token_type_ids = tf.zeros(shape=[batch_size, seq_length], dtype=tf.int32)
+            token_type_ids = tf.zeros(shape=[self._batch_size, self._seq_length], dtype=tf.int32)
 
-        with tf.variable_scope(scope, default_name="bert"):
-            with tf.variable_scope("embeddings"):
-                # Perform embedding lookup on the word ids.
-                (self.embedding_output, self.embedding_table) = embedding_lookup(
-                    input_ids=input_ids,
-                    vocab_size=config.vocab_size,
-                    embedding_size=config.hidden_size,
-                    initializer_range=config.initializer_range,
-                    word_embedding_name="word_embeddings",
-                    use_one_hot_embeddings=use_one_hot_embeddings)
-
-                # Add positional embeddings and token type embeddings, then layer
-                # normalize and perform dropout.
-                self.embedding_output = embedding_postprocessor(
-                    input_tensor=self.embedding_output,
-                    use_token_type=True,
-                    token_type_ids=token_type_ids,
-                    token_type_vocab_size=config.type_vocab_size,
-                    token_type_embedding_name="token_type_embeddings",
-                    use_position_embeddings=True,
-                    position_embedding_name="position_embeddings",
-                    initializer_range=config.initializer_range,
-                    max_position_embeddings=config.max_position_embeddings,
-                    dropout_prob=config.hidden_dropout_prob)
-
-            with tf.variable_scope("encoder"):
-                # This converts a 2D mask of shape [batch_size, seq_length] to a 3D
-                # mask of shape [batch_size, seq_length, seq_length] which is used
-                # for the attention scores.
-                attention_mask = create_attention_mask_from_input_mask(
-                    input_ids, input_mask)
-
-                # Run the stacked transformer.
-                # `sequence_output` shape = [batch_size, seq_length, hidden_size].
-                self.all_encoder_layers = transformer_model(
-                    input_tensor=self.embedding_output,
-                    attention_mask=attention_mask,
-                    hidden_size=config.hidden_size,
-                    num_hidden_layers=config.num_hidden_layers,
-                    num_attention_heads=config.num_attention_heads,
-                    intermediate_size=config.intermediate_size,
-                    intermediate_act_fn=get_activation(config.hidden_act),
-                    hidden_dropout_prob=config.hidden_dropout_prob,
-                    attention_probs_dropout_prob=config.attention_probs_dropout_prob,
-                    initializer_range=config.initializer_range,
-                    do_return_all_layers=True)
-
-            self.sequence_output = self.all_encoder_layers[-1]
-            # The "pooler" converts the encoded sequence tensor of shape
-            # [batch_size, seq_length, hidden_size] to a tensor of shape
-            # [batch_size, hidden_size]. This is necessary for segment-level
-            # (or segment-pair-level) classification tasks where we need a fixed
-            # dimensional representation of the segment.
-            with tf.variable_scope("pooler"):
-                # We "pool" the model by simply taking the hidden state corresponding
-                # to the first token. We assume that this has been pre-trained
-                first_token_tensor = tf.squeeze(self.sequence_output[:, 0:1, :], axis=1)
-                self.pooled_output = tf.layers.dense(
-                    first_token_tensor,
-                    config.hidden_size,
-                    activation=tf.tanh,
-                    kernel_initializer=create_initializer(config.initializer_range))
-
-    def get_pooled_output(self):
-        return self.pooled_output
-
-    def get_sequence_output(self):
-        """Gets final hidden layer of encoder.
-
-        Returns:
-          float Tensor of shape [batch_size, seq_length, hidden_size] corresponding
-          to the final hidden of the transformer encoder.
-        """
-        return self.sequence_output
-
-    def get_all_encoder_layers(self):
-        return self.all_encoder_layers
-
-    def get_embedding_output(self):
-        """Gets output of the embedding lookup (i.e., input to the transformer).
-
-        Returns:
-          float Tensor of shape [batch_size, seq_length, hidden_size] corresponding
-          to the output of the embedding layer, after summing the word
-          embeddings with the positional embeddings and the token type embeddings,
-          then performing layer normalization. This is the input to the transformer.
-        """
-        return self.embedding_output
-
-    def get_embedding_table(self):
-        return self.embedding_table
+        x = self.embeddings([input_ids, token_type_ids])
+        x = self.encoder([x, input_mask])
+        return self.pooler(x)
 
 
 def gelu(x):
