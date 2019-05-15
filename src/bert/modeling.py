@@ -201,9 +201,9 @@ class BertModel(tf.keras.Model):
         self.pooler = BertPooler(**config.__dict__)
 
     def call(self, inputs):
-        input_ids = inputs[0]
-        input_mask = inputs[1]
-        token_type_ids = inputs[2]
+        input_ids = inputs['input_ids']
+        input_mask = inputs['input_mask']
+        token_type_ids = inputs['segment_ids']
 
         if input_mask is None:
             input_mask = tf.ones(shape=[self._batch_size, self._seq_length], dtype=tf.int32)

@@ -450,7 +450,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
 
         return example
 
-    def input_fn(params):
+    def input_fn():
         """The actual input function."""
         # batch_size = params["batch_size"]
 
@@ -727,11 +727,6 @@ def main():
         len(train_examples) / FLAGS.batch_size * FLAGS.train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
-    bert = BertTextClassifier(bert_config=bert_config,
-                              is_training=True,
-                              num_labels=len(label_list),
-                              labels=label_list,
-                              use_one_hot_embeddings=False)
 
 
     # model_fn = model_fn_builder(
@@ -751,14 +746,25 @@ def main():
     #     model_fn=model_fn,
     #     config=run_config)
 
+
+    bert = BertTextClassifier(bert_config=bert_config,
+                              is_training=True,
+                              num_labels=len(label_list),
+                              labels=label_list,
+                              use_one_hot_embeddings=False)
+
     train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
     file_based_convert_examples_to_features(
         train_examples, label_list, FLAGS.max_seq_length, tokenizer, train_file)
-    # train_input_fn = file_based_input_fn_builder(
-    #     input_file=train_file,
-    #     seq_length=FLAGS.max_seq_length,
-    #     is_training=True,
-    #     drop_remainder=True)
+    train_input_fn = file_based_input_fn_builder(
+        input_file=train_file,
+        seq_length=FLAGS.max_seq_length,
+        is_training=True,
+        drop_remainder=True)
+
+    for batch_i, batch in enumerate(train_input_fn()):
+        result = bert(batch)
+        print(f"batch_i: {batch_i}, type: {type(batch)}")
 
     # estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
 
