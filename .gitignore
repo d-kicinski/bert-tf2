@@ -1,5 +1,6 @@
-models/bert
-data
+resources/models
+resources/dataset
+
 .idea
 
 
