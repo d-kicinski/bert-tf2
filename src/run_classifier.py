@@ -94,12 +94,14 @@ class InputFeatures(object):
                  input_ids,
                  input_mask,
                  segment_ids,
+                 positional_ids,
                  label_id,
                  is_real_example=True):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
+        self.positional_ids = positional_ids
         self.is_real_example = is_real_example
 
 
@@ -373,6 +375,9 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
 
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
+    positional_ids = list(range(len(input_ids)))
+
+
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
     input_mask = [1] * len(input_ids)
@@ -382,16 +387,19 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
         input_ids.append(0)
         input_mask.append(0)
         segment_ids.append(0)
+        positional_ids.append(0)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
+    assert len(positional_ids) == max_seq_length
 
     label_id = label_map[example.label]
     feature = InputFeatures(
         input_ids=input_ids,
         input_mask=input_mask,
         segment_ids=segment_ids,
+        positional_ids=positional_ids,
         label_id=label_id,
         is_real_example=True)
     return feature
@@ -415,6 +423,7 @@ def file_based_convert_examples_to_features(
         features["input_ids"] = create_int_feature(feature.input_ids)
         features["input_mask"] = create_int_feature(feature.input_mask)
         features["segment_ids"] = create_int_feature(feature.segment_ids)
+        features["position_ids"] = create_int_feature(feature.positional_ids)
         features["label_ids"] = create_int_feature([feature.label_id])
         features["is_real_example"] = create_int_feature(
             [int(feature.is_real_example)])
@@ -432,6 +441,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
         "input_ids": tf.io.FixedLenFeature([seq_length], tf.int64),
         "input_mask": tf.io.FixedLenFeature([seq_length], tf.int64),
         "segment_ids": tf.io.FixedLenFeature([seq_length], tf.int64),
+        "position_ids": tf.io.FixedLenFeature([seq_length], tf.int64),
         "label_ids": tf.io.FixedLenFeature([], tf.int64),
         "is_real_example": tf.io.FixedLenFeature([], tf.int64),
     }
@@ -504,7 +514,6 @@ class BertTextClassifier(tf.keras.Model):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
         x = self.bert_model(inputs)
         return self.dense(x)
-
 
         # with tf.variable_scope("loss"):
         #     if is_training:
@@ -719,15 +728,13 @@ def main():
 
     # run_config = tf.estimator.RunConfig(
     #     session_config=session_config,
-        # model_dir=FLAGS.output_dir,
-        # save_checkpoints_steps=FLAGS.save_checkpoints_steps)
+    # model_dir=FLAGS.output_dir,
+    # save_checkpoints_steps=FLAGS.save_checkpoints_steps)
 
     train_examples = processor.get_train_examples(FLAGS.data_dir)
     num_train_steps = int(
         len(train_examples) / FLAGS.batch_size * FLAGS.train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
-
-
 
     # model_fn = model_fn_builder(
     #     bert_config=bert_config,
@@ -739,13 +746,11 @@ def main():
     #     use_tpu=False,
     #     use_one_hot_embeddings=False)
 
-
     # If TPU is not available, this will fall back to normal Estimator on CPU
     # or GPU.
     # estimator = tf.estimator.Estimator(
     #     model_fn=model_fn,
     #     config=run_config)
-
 
     bert = BertTextClassifier(bert_config=bert_config,
                               is_training=True,
