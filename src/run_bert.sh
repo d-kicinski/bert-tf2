@@ -1,22 +1,22 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 root=$(git rev-parse --show-toplevel)
 
-export BERT_BASE_DIR=${root}/data/uncased_L-12_H-768_A-12
-export GLUE_DIR=${root}/data/glue_data
+bert_dir=${root}/resources/models/uncased_L-12_H-768_A-12
+dataset_dir=${root}/resources/dataset
 
+output_dir=${root}/output && mkdir -p ${output_dir}
 
 python ${root}/src/run_classifier.py \
   --task_name=MRPC \
-  --do_train=true \
-  --do_eval=true \
-  --data_dir=${GLUE_DIR}/MRPC \
-  --vocab_file=${BERT_BASE_DIR}/vocab.txt \
-  --bert_config_file=${BERT_BASE_DIR}/bert_config_dev.json \
-  --init_checkpoint=${BERT_BASE_DIR}/bert_model.ckpt \
-  --max_seq_length=35 \
-  --train_batch_size=32 \
+  --data_dir=${dataset_dir}/MRPC \
+  --vocab_file=${bert_dir}/vocab.txt \
+  --bert_config_file=${bert_dir}/bert_config.json \
+  --init_checkpoint=${bert_dir}/bert_model.ckpt \
+  --max_seq_length=128 \
+  --batch_size=32 \
   --learning_rate=2e-5 \
-  --num_train_epochs=1.0 \
-  --output_dir=/tmp/mrpc_output/
+  --train_epochs=3 \
+  --output_dir=${output_dir}
+
 

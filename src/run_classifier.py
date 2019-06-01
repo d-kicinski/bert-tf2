@@ -12,17 +12,17 @@ import argparse
 
 
 @dataclass
-class Default:
-    data_dir: str = "data/glue_data/MNLI"
-    bert_config_file: str = "data/uncased_L-12_H-768_A-12/bert_config_dev.json"
+class Params:
+    data_dir: str = "resources/dataset/MNLI"
+    bert_config_file: str = "resources/models/uncased_L-12_H-768_A-12/bert_config.json"
     task_name: str = "mnli"
-    vocab_file: str = "data/uncased_L-12_H-768_A-12/vocab.txt"
-    output_dir: str = "output_dir/dev"
-    init_checkpoint: str = "data/uncased_L-12_H-768_A-12"
-    max_seq_length: int = 128
+    vocab_file: str = "resources/models/uncased_L-12_H-768_A-12/vocab.txt"
+    output_dir: str = "output/dev"
+    init_checkpoint: str = "resources/models/uncased_L-12_H-768_A-12"
+    max_seq_length: int = 32
     learning_rate: float = 5e-5
     train_epochs: int = 3
-    batch_size: int = 16
+    batch_size: int = 32
     warmup_proportion: float = 0.1
     save_checkpoints_steps: int = 1000
     iterations_per_loop: int = 1000
@@ -31,26 +31,26 @@ class Default:
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Tran Bert')
-    parser.add_argument('--data_dir', type=str, default=Default.data_dir)
-    parser.add_argument('--bert_config_file', type=str, default=Default.bert_config_file)
-    parser.add_argument('--task_name', type=str, default=Default.task_name)
-    parser.add_argument('--vocab_file', type=str, default=Default.vocab_file)
-    parser.add_argument('--output_dir', type=str, default=Default.output_dir)
-    parser.add_argument('--init_checkpoint', type=str, default=Default.init_checkpoint)
-    parser.add_argument('--max_seq_length', type=int, default=Default.max_seq_length)
-    parser.add_argument('--batch_size', type=int, default=Default.batch_size)
-    parser.add_argument('--learning_rate', type=int, default=Default.learning_rate)
-    parser.add_argument('--train_epochs', type=int, default=Default.train_epochs)
-    parser.add_argument('--warmup_proportion', type=float, default=Default.warmup_proportion)
-    parser.add_argument('--save_checkpoints_steps', type=int, default=Default.save_checkpoints_steps)
-    parser.add_argument('--iterations_per_loop', type=int, default=Default.iterations_per_loop)
+    parser.add_argument('--data_dir', type=str, default=Params.data_dir)
+    parser.add_argument('--bert_config_file', type=str, default=Params.bert_config_file)
+    parser.add_argument('--task_name', type=str, default=Params.task_name)
+    parser.add_argument('--vocab_file', type=str, default=Params.vocab_file)
+    parser.add_argument('--output_dir', type=str, default=Params.output_dir)
+    parser.add_argument('--init_checkpoint', type=str, default=Params.init_checkpoint)
+    parser.add_argument('--max_seq_length', type=int, default=Params.max_seq_length)
+    parser.add_argument('--batch_size', type=int, default=Params.batch_size)
+    parser.add_argument('--learning_rate', type=float, default=Params.learning_rate)
+    parser.add_argument('--train_epochs', type=int, default=Params.train_epochs)
+    parser.add_argument('--warmup_proportion', type=float, default=Params.warmup_proportion)
+    parser.add_argument('--save_checkpoints_steps', type=int, default=Params.save_checkpoints_steps)
+    parser.add_argument('--iterations_per_loop', type=int, default=Params.iterations_per_loop)
 
-    parser.add_argument('--do_lower_case', default=Default.do_lower_case, type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--do_lower_case', default=Params.do_lower_case, type=lambda x: (str(x).lower() == 'true'))
 
     return parser.parse_args()
 
 
-FLAGS = Default(**parse_args().__dict__)
+FLAGS = Params(**parse_args().__dict__)
 
 
 class InputExample(object):
