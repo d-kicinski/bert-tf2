@@ -184,6 +184,7 @@ class BertPooler(keras.Model):
 
 class BertModel(keras.Model):
     """BERT model ("Bidirectional Encoder Representations from Transformers")."""
+
     def __init__(self,
                  config,
                  is_training,
@@ -302,7 +303,7 @@ def get_assignment_map_from_checkpoint(tvars, init_checkpoint):
     return (assignment_map, initialized_variable_names)
 
 
-def dropout(input_tensor, dropout_prob):
+def dropout(dropout_prob):
     """Perform dropout.
 
     Args:
@@ -314,27 +315,24 @@ def dropout(input_tensor, dropout_prob):
       A version of `input_tensor` with dropout applied.
     """
     if dropout_prob is None or dropout_prob == 0.0:
-        return input_tensor
+        return keras.layers.Lambda(lambda x: x)
 
-    return tf.keras.Dropout(input_tensor, dropout_prob)
-
-    # def layer_norm(input_tensor):
-    #     x = tf.keras.layers.experimental.LayerNormalization()
-    x = tfa.layers.InstanceNormalization()
-    # return tf.keras.Sequential(inputs=input_tensor, outputs=x)
+    return keras.layers.Dropout(dropout_prob)
 
 
-#
-#
-# def norm_and_dropout(input_tensor, dropout_prob, name=None):
-#     """Runs layer normalization followed by dropout."""
-#     x = tf.keras.layers.Dropout(layer_norm(input_tensor), dropout_prob)
-#     return x
+def layer_norm():
+    x = keras.layers.LayerNormalization()
+    return x
+
+
+def norm_and_dropout(dropout_prob):
+    #     """Runs layer normalization followed by dropout."""
+    return keras.Sequential(layers=[layer_norm, dropout_prob(dropout_prob)])
 
 
 def create_initializer(initializer_range=0.02):
     """Creates a `truncated_normal_initializer` with the given range."""
-    return tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=initializer_range, seed=None)
+    return keras.initializers.TruncatedNormal(mean=0.0, stddev=initializer_range, seed=None)
 
     # def embedding_lookup(input_ids,
     #                      vocab_size,
@@ -460,9 +458,9 @@ def create_initializer(initializer_range=0.02):
     #         for position [0, 1, 2, ..., max_position_embeddings-1], and the current
     #         sequence has positions [0, 1, 2, ... seq_length-1], so we can just
     #         perform a slice.
-    position_embeddings = tf.slice(full_position_embeddings, [0, 0],
-                                   [seq_length, -1])
-    num_dims = len(output.shape.as_list())
+    # position_embeddings = tf.slice(full_position_embeddings, [0, 0],
+    #                                [seq_length, -1])
+    # num_dims = len(output.shape.as_list())
 
     # Only the last two dimensions are relevant (`seq_length` and `width`), so
     # we broadcast among the first dimensions, which is typically just
