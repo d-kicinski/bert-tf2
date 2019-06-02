@@ -5,7 +5,9 @@ import math
 import re
 import numpy as np
 import six
+
 import tensorflow as tf
+from tensorflow.python import keras
 import tensorflow_addons as tfa
 from pathlib import Path
 
@@ -86,12 +88,13 @@ class BertConfig(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-class BertEmbeddings(tf.keras.Model):
+class BertEmbeddings(keras.Model):
     """Perform embedding lookup on the word ids."""
 
     def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
-                 hidden_dropout_prob, max_position_embeddings, **kwargs):
-        super(BertEmbeddings, self).__init__()
+                 hidden_dropout_prob, max_position_embeddings, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
         self._vocab_size = vocab_size
         self._hidden_size = hidden_size
         self._initializer_range = initializer_range
@@ -100,20 +103,20 @@ class BertEmbeddings(tf.keras.Model):
         self._hidden_dropout_prob = hidden_dropout_prob
         self._max_position_embeddings = max_position_embeddings
 
-        self._word_embeddings = tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=hidden_size,
+        self._word_embeddings = keras.layers.Embedding(input_dim=vocab_size, output_dim=hidden_size,
+                                                       embeddings_initializer=create_initializer(
+                                                           self._initializer_range))
+
+        self._position_embeddings = keras.layers.Embedding(input_dim=max_position_embeddings,
+                                                           output_dim=hidden_size,
+                                                           embeddings_initializer=create_initializer(
+                                                               self._initializer_range))
+
+        self._segment_embeddings = keras.layers.Embedding(input_dim=type_vocab_size, output_dim=hidden_size,
                                                           embeddings_initializer=create_initializer(
                                                               self._initializer_range))
 
-        self._position_embeddings = tf.keras.layers.Embedding(input_dim=max_position_embeddings,
-                                                              output_dim=hidden_size,
-                                                              embeddings_initializer=create_initializer(
-                                                                  self._initializer_range))
-
-        self._segment_embeddings = tf.keras.layers.Embedding(input_dim=type_vocab_size, output_dim=hidden_size,
-                                                             embeddings_initializer=create_initializer(
-                                                                 self._initializer_range))
-
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         input_ids = inputs[0]
         position_ids = inputs[1]
         token_type_ids = inputs[2]
@@ -124,33 +127,13 @@ class BertEmbeddings(tf.keras.Model):
 
         output = norm_and_dropout(embeddings, self._hidden_dropout_prob)
 
-        # embedding_output, embedding_table = embedding_lookup(
-        #     input_ids=input_ids,
-        #     vocab_size=self._vocab_size,
-        #     embedding_size=self._hidden_size,
-        #     initializer_range=self._initializer_range,
-        #     word_embedding_name="word_embeddings",
-        #     use_one_hot_embeddings=self._use_one_hot_embeddings)
-
-        # embedding_output = embedding_postprocessor(
-        #     input_tensor=embedding_output,
-        #     use_token_type=True,
-        #     token_type_ids=token_type_ids,
-        #     token_type_vocab_size=self._type_vocab_size,
-        #     token_type_embedding_name="token_type_embeddings",
-        #     use_position_embeddings=True,
-        #     position_embedding_name="position_embeddings",
-        #     initializer_range=self._initializer_range,
-        #     max_position_embeddings=self._max_position_embeddings,
-        #     dropout_prob=self._hidden_dropout_prob)
-        #
         return output
 
 
-class BertEncoder(tf.keras.Model):
+class BertEncoder(keras.Model):
     def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
-                 hidden_dropout_prob, max_position_embeddings, **kwargs):
-        super(BertEncoder, self).__init__()
+                 hidden_dropout_prob, max_position_embeddings, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._vocab_size = vocab_size
         self._hidden_size = hidden_size
         self._initializer_range = initializer_range
@@ -159,7 +142,7 @@ class BertEncoder(tf.keras.Model):
         self._hidden_dropout_prob = hidden_dropout_prob
         self._max_position_embeddings = max_position_embeddings
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         input_ids = inputs[0]
         input_mask = inputs[1]
         attention_mask = create_attention_mask_from_input_mask(
@@ -183,15 +166,15 @@ class BertEncoder(tf.keras.Model):
         return all_encoder_layers
 
 
-class BertPooler(tf.keras.Model):
-    def __init__(self, hidden_size, initializer_range, **kwargs):
-        super(BertPooler, self).__init__()
+class BertPooler(keras.Model):
+    def __init__(self, hidden_size, initializer_range, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._hidden_size = hidden_size
         self._initializer_range = initializer_range
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         first_token_tensor = tf.squeeze(inputs[:, 0:1, :], axis=1)
-        pooled_output = tf.keras.Dense(
+        pooled_output = keras.Dense(
             first_token_tensor,
             self._hidden_size,
             activation=tf.tanh,
@@ -199,16 +182,17 @@ class BertPooler(tf.keras.Model):
         return pooled_output
 
 
-class BertModel(tf.keras.Model):
+class BertModel(keras.Model):
     """BERT model ("Bidirectional Encoder Representations from Transformers")."""
-
     def __init__(self,
                  config,
                  is_training,
                  batch_size,
                  seq_length,
-                 use_one_hot_embeddings=False):
-        super(BertModel, self).__init__()
+                 use_one_hot_embeddings=False,
+                 *args,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
         config = copy.deepcopy(config)
         if not is_training:
             config.hidden_dropout_prob = 0.0
@@ -221,7 +205,7 @@ class BertModel(tf.keras.Model):
         self.encoder = BertEncoder(use_one_hot_embeddings=use_one_hot_embeddings, **config.__dict__)
         self.pooler = BertPooler(**config.__dict__)
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         input_ids = inputs['input_ids']
         input_mask = inputs['input_mask']
         position_ids = inputs['position_ids']
@@ -352,54 +336,52 @@ def create_initializer(initializer_range=0.02):
     """Creates a `truncated_normal_initializer` with the given range."""
     return tf.keras.initializers.TruncatedNormal(mean=0.0, stddev=initializer_range, seed=None)
 
-
-def embedding_lookup(input_ids,
-                     vocab_size,
-                     embedding_size=128,
-                     initializer_range=0.02,
-                     word_embedding_name="word_embeddings",
-                     use_one_hot_embeddings=False):
-    """Looks up words embeddings for id tensor.
-
-    Args:
-      input_ids: int32 Tensor of shape [batch_size, seq_length] containing word
-        ids.
-      vocab_size: int. Size of the embedding vocabulary.
-      embedding_size: int. Width of the word embeddings.
-      initializer_range: float. Embedding initialization range.
-      word_embedding_name: string. Name of the embedding table.
-      use_one_hot_embeddings: bool. If True, use one-hot method for word
-    embeddings. If False, use `tf.gather()`.
-
-    Returns:
-      float Tensor of shape [batch_size, seq_length, embedding_size].
-    """
-    # This function assumes that the input is of shape [batch_size, seq_length,
-    # num_inputs].
+    # def embedding_lookup(input_ids,
+    #                      vocab_size,
+    #                      embedding_size=128,
+    #                      initializer_range=0.02,
+    #                      word_embedding_name="word_embeddings",
+    #                      use_one_hot_embeddings=False):
+    #     """Looks up words embeddings for id tensor.
     #
-    # If the input is a 2D tensor of shape [batch_size, seq_length], we
-    # reshape to [batch_size, seq_length, 1].
-    if input_ids.shape.ndims == 2:
-        input_ids = tf.expand_dims(input_ids, axis=[-1])
-
-    embedding_table = tf.get_variable(
-        name=word_embedding_name,
-        shape=[vocab_size, embedding_size],
-        initializer=create_initializer(initializer_range))
-
-    flat_input_ids = tf.reshape(input_ids, [-1])
-    if use_one_hot_embeddings:
-        one_hot_input_ids = tf.one_hot(flat_input_ids, depth=vocab_size)
-        output = tf.matmul(one_hot_input_ids, embedding_table)
-    else:
-        output = tf.gather(embedding_table, flat_input_ids)
-
-    input_shape = get_shape_list(input_ids)
-
-    output = tf.reshape(output,
-                        input_shape[0:-1] + [input_shape[-1] * embedding_size])
-    return output, embedding_table
-
+    #     Args:
+    #       input_ids: int32 Tensor of shape [batch_size, seq_length] containing word
+    #         ids.
+    #       vocab_size: int. Size of the embedding vocabulary.
+    #       embedding_size: int. Width of the word embeddings.
+    #       initializer_range: float. Embedding initialization range.
+    #       word_embedding_name: string. Name of the embedding table.
+    #       use_one_hot_embeddings: bool. If True, use one-hot method for word
+    #     embeddings. If False, use `tf.gather()`.
+    #
+    #     Returns:
+    #       float Tensor of shape [batch_size, seq_length, embedding_size].
+    #     """
+    #     This function assumes that the input is of shape [batch_size, seq_length,
+    #     num_inputs].
+    #
+    #     If the input is a 2D tensor of shape [batch_size, seq_length], we
+    #     reshape to [batch_size, seq_length, 1].
+    # if input_ids.shape.ndims == 2:
+    #     input_ids = tf.expand_dims(input_ids, axis=[-1])
+    #
+    # embedding_table = tf.get_variable(
+    #     name=word_embedding_name,
+    #     shape=[vocab_size, embedding_size],
+    #     initializer=create_initializer(initializer_range))
+    #
+    # flat_input_ids = tf.reshape(input_ids, [-1])
+    # if use_one_hot_embeddings:
+    #     one_hot_input_ids = tf.one_hot(flat_input_ids, depth=vocab_size)
+    #     output = tf.matmul(one_hot_input_ids, embedding_table)
+    # else:
+    #     output = tf.gather(embedding_table, flat_input_ids)
+    #
+    # input_shape = get_shape_list(input_ids)
+    #
+    # output = tf.reshape(output,
+    #                     input_shape[0:-1] + [input_shape[-1] * embedding_size])
+    # return output, embedding_table
 
     # def embedding_postprocessor(input_tensor,
     #                             use_token_type=False,
@@ -453,20 +435,8 @@ def embedding_lookup(input_ids,
     #             name=token_type_embedding_name,
     #             shape=[token_type_vocab_size, width],
     #             initializer=create_initializer(initializer_range))
-    This
-    vocab
-    will
-    be
-    small
-    so
-    we
-    always
-    do
-    one - hot
-    here, since
-    it is always
-    faster
-    for a small vocabulary.
+    #         This vocab will be small so we always do one-hot here, since it is always
+    #         faster for a small vocabulary.
     # flat_token_type_ids = tf.reshape(token_type_ids, [-1])
     # one_hot_ids = tf.one_hot(flat_token_type_ids, depth=token_type_vocab_size)
     # token_type_embeddings = tf.matmul(one_hot_ids, token_type_table)
@@ -481,73 +451,22 @@ def embedding_lookup(input_ids,
     #             name=position_embedding_name,
     #             shape=[max_position_embeddings, width],
     #             initializer=create_initializer(initializer_range))
-    Since
-    the
-    position
-    embedding
-    table is a
-    learned
-    variable, we
-    create
-    it
-    using
-    a(long)
-    sequence
-    length
-    `max_position_embeddings`.The
-    actual
-    sequence
-    length
-    might
-    be
-    shorter
-    than
-    this,
-    for faster training of
-    tasks
-    that
-    do
-    not have
-    long
-    sequences.
-
-    So
-    `full_position_embeddings` is effectively
-    an
-    embedding
-    table
-    for position[0, 1, 2, ..., max_position_embeddings - 1], and the current
-    sequence
-    has
-    positions[0, 1, 2, ...
-    seq_length - 1], so
-    we
-    can
-    just
-    perform
-    a
-    slice.
-    # position_embeddings = tf.slice(full_position_embeddings, [0, 0],
-    #                                [seq_length, -1])
-    # num_dims = len(output.shape.as_list())
+    #         Since the position embedding table is a learned variable, we create it
+    #         using a (long) sequence length `max_position_embeddings`. The actual
+    #         sequence length might be shorter than this, for faster training of
+    #         tasks that do not have long sequences.
     #
-    Only
-    the
-    last
-    two
-    dimensions
-    are
-    relevant(`seq_length` and `width`), so
-    we
-    broadcast
-    among
-    the
-    first
-    dimensions, which is typically
-    just
-    the
-    batch
-    size.
+    #         So `full_position_embeddings` is effectively an embedding table
+    #         for position [0, 1, 2, ..., max_position_embeddings-1], and the current
+    #         sequence has positions [0, 1, 2, ... seq_length-1], so we can just
+    #         perform a slice.
+    position_embeddings = tf.slice(full_position_embeddings, [0, 0],
+                                   [seq_length, -1])
+    num_dims = len(output.shape.as_list())
+
+    # Only the last two dimensions are relevant (`seq_length` and `width`), so
+    # we broadcast among the first dimensions, which is typically just
+    # the batch size.
     # position_broadcast_shape = []
     # for _ in range(num_dims - 2):
     #     position_broadcast_shape.append(1)
@@ -555,6 +474,8 @@ def embedding_lookup(input_ids,
     # position_embeddings = tf.reshape(position_embeddings,
     #                                  position_broadcast_shape)
     # output += position_embeddings
+
+
 #
 # output = norm_and_dropout(output, dropout_prob)
 # return output
@@ -594,20 +515,7 @@ def create_attention_mask_from_input_mask(from_tensor, to_mask):
     return mask
 
 
-def attention_layer(from_tensor,
-                    to_tensor,
-                    attention_mask=None,
-                    num_attention_heads=1,
-                    size_per_head=512,
-                    query_act=None,
-                    key_act=None,
-                    value_act=None,
-                    attention_probs_dropout_prob=0.0,
-                    initializer_range=0.02,
-                    do_return_2d_tensor=False,
-                    batch_size=None,
-                    from_seq_length=None,
-                    to_seq_length=None):
+class Attention(keras.Model):
     """Performs multi-headed attention from `from_tensor` to `to_tensor`.
 
     This is an implementation of multi-headed attention based on "Attention
@@ -665,13 +573,53 @@ def attention_layer(from_tensor,
       ValueError: Any of the arguments or tensor shapes are invalid.
     """
 
-    def transpose_for_scores(input_tensor, batch_size, num_attention_heads,
-                             seq_length, width):
-        output_tensor = tf.reshape(
-            input_tensor, [batch_size, seq_length, num_attention_heads, width])
+    def __init__(self,
+                 attention_mask=None,
+                 num_attention_heads=1,
+                 size_per_head=512,
+                 query_act=None,
+                 key_act=None,
+                 value_act=None,
+                 attention_probs_dropout_prob=0.0,
+                 initializer_range=0.02,
+                 do_return_2d_tensor=False,
+                 batch_size=None,
+                 from_seq_length=None,
+                 to_seq_length=None,
+                 dtype=tf.float32,
+                 *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._attention_mask = attention_mask
+        self._num_attention_heads = num_attention_heads
+        self._size_per_head = size_per_head
+        self._attention_probs_dropout_prob = attention_probs_dropout_prob
+        self._do_return_2d_tensor = do_return_2d_tensor
+        self._batch_size = batch_size
+        self._from_seq_length = from_seq_length
+        self._to_seq_length = to_seq_length
+        self._dtype = dtype
 
-        output_tensor = tf.transpose(output_tensor, [0, 2, 1, 3])
-        return output_tensor
+        dense_units = num_attention_heads * size_per_head
+
+        self.query_dense = keras.layers.Dense(units=dense_units,
+                                              activation=query_act,
+                                              kernel_initializer=create_initializer(initializer_range),
+                                              dtype=dtype)
+
+        self.key_dense = keras.layers.Dense(units=dense_units,
+                                            activation=key_act,
+                                            kernel_initializer=create_initializer(initializer_range),
+                                            dtype=dtype)
+
+        self.value_dense = keras.layers.Dense(units=dense_units,
+                                              activation=value_act,
+                                              kernel_initializer=create_initializer(initializer_range),
+                                              dtype=dtype)
+
+
+def call(self, inputs):
+    from_tensor = inputs[0]
+    to_tensor = inputs[1]
 
     from_shape = get_shape_list(from_tensor, expected_rank=[2, 3])
     to_shape = get_shape_list(to_tensor, expected_rank=[2, 3])
@@ -680,12 +628,16 @@ def attention_layer(from_tensor,
         raise ValueError(
             "The rank of `from_tensor` must match the rank of `to_tensor`.")
 
+    batch_size = self._batch_size
+    from_seq_length = self._from_seq_length
+    to_seq_length = self._to_seq_length
+
     if len(from_shape) == 3:
         batch_size = from_shape[0]
         from_seq_length = from_shape[1]
         to_seq_length = to_shape[1]
     elif len(from_shape) == 2:
-        if (batch_size is None or from_seq_length is None or to_seq_length is None):
+        if batch_size is None or from_seq_length is None or to_seq_length is None:
             raise ValueError(
                 "When passing in rank 2 tensors to attention_layer, the values "
                 "for `batch_size`, `from_seq_length`, and `to_seq_length` "
@@ -702,53 +654,46 @@ def attention_layer(from_tensor,
     to_tensor_2d = reshape_to_matrix(to_tensor)
 
     # `query_layer` = [B*F, N*H]
-    query_layer = tf.layers.dense(
-        from_tensor_2d,
-        num_attention_heads * size_per_head,
-        activation=query_act,
-        name="query",
-        kernel_initializer=create_initializer(initializer_range))
+    query_layer = self.query_dense(from_tensor_2d)
 
     # `key_layer` = [B*T, N*H]
-    key_layer = tf.layers.dense(
-        to_tensor_2d,
-        num_attention_heads * size_per_head,
-        activation=key_act,
-        name="key",
-        kernel_initializer=create_initializer(initializer_range))
+    key_layer = self.key_dense(to_tensor_2d)
 
     # `value_layer` = [B*T, N*H]
-    value_layer = tf.layers.dense(
-        to_tensor_2d,
-        num_attention_heads * size_per_head,
-        activation=value_act,
-        name="value",
-        kernel_initializer=create_initializer(initializer_range))
+    value_layer = self.value_dense(to_tensor_2d)
+
+    def transpose_for_scores(input_tensor, batch_size, num_attention_heads, seq_length, width):
+        output_tensor = tf.reshape(
+            input_tensor, [batch_size, seq_length, num_attention_heads, width])
+
+        output_tensor = tf.transpose(output_tensor, [0, 2, 1, 3])
+        return output_tensor
 
     # `query_layer` = [B, N, F, H]
-    query_layer = transpose_for_scores(query_layer, batch_size,
-                                       num_attention_heads, from_seq_length,
-                                       size_per_head)
+    query_layer = transpose_for_scores(query_layer,
+                                       batch_size, self._num_attention_heads, from_seq_length,
+                                       self._size_per_head)
 
     # `key_layer` = [B, N, T, H]
-    key_layer = transpose_for_scores(key_layer, batch_size, num_attention_heads,
-                                     to_seq_length, size_per_head)
+    key_layer = transpose_for_scores(key_layer,
+                                     batch_size, self._num_attention_heads, to_seq_length,
+                                     self._size_per_head)
 
     # Take the dot product between "query" and "key" to get the raw
     # attention scores.
     # `attention_scores` = [B, N, F, T]
     attention_scores = tf.matmul(query_layer, key_layer, transpose_b=True)
     attention_scores = tf.multiply(attention_scores,
-                                   1.0 / math.sqrt(float(size_per_head)))
+                                   1.0 / math.sqrt(float(self._size_per_head)))
 
-    if attention_mask is not None:
+    if self._attention_mask is not None:
         # `attention_mask` = [B, 1, F, T]
-        attention_mask = tf.expand_dims(attention_mask, axis=[1])
+        attention_mask = tf.expand_dims(self._attention_mask, axis=[1])
 
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
         # positions we want to attend and -10000.0 for masked positions.
-        adder = (1.0 - tf.cast(attention_mask, tf.float32)) * -10000.0
+        adder = (1.0 - tf.cast(attention_mask, self._dtype)) * -10000.0
 
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
@@ -760,12 +705,12 @@ def attention_layer(from_tensor,
 
     # This is actually dropping out entire tokens to attend to, which might
     # seem a bit unusual, but is taken from the original Transformer paper.
-    attention_probs = dropout(attention_probs, attention_probs_dropout_prob)
+    attention_probs = dropout(attention_probs, self._attention_probs_dropout_prob)
 
     # `value_layer` = [B, T, N, H]
     value_layer = tf.reshape(
         value_layer,
-        [batch_size, to_seq_length, num_attention_heads, size_per_head])
+        [batch_size, to_seq_length, self._num_attention_heads, self._size_per_head])
 
     # `value_layer` = [B, N, T, H]
     value_layer = tf.transpose(value_layer, [0, 2, 1, 3])
@@ -776,16 +721,16 @@ def attention_layer(from_tensor,
     # `context_layer` = [B, F, N, H]
     context_layer = tf.transpose(context_layer, [0, 2, 1, 3])
 
-    if do_return_2d_tensor:
+    if self._do_return_2d_tensor:
         # `context_layer` = [B*F, N*H]
         context_layer = tf.reshape(
             context_layer,
-            [batch_size * from_seq_length, num_attention_heads * size_per_head])
+            [batch_size * from_seq_length, self._num_attention_heads * self._size_per_head])
     else:
         # `context_layer` = [B, F, N*H]
         context_layer = tf.reshape(
             context_layer,
-            [batch_size, from_seq_length, num_attention_heads * size_per_head])
+            [batch_size, from_seq_length, self._num_attention_heads * self._size_per_head])
 
     return context_layer
 
