@@ -92,8 +92,8 @@ class BertEmbeddings(keras.Model):
     """Perform embedding lookup on the word ids."""
 
     def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
-                 hidden_dropout_prob, max_position_embeddings, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+                 hidden_dropout_prob, max_position_embeddings, dtype, *args, **kwargs):
+        super().__init__()
 
         self._vocab_size = vocab_size
         self._hidden_size = hidden_size
@@ -104,16 +104,19 @@ class BertEmbeddings(keras.Model):
 
         self._word_embeddings = keras.layers.Embedding(input_dim=vocab_size, output_dim=hidden_size,
                                                        embeddings_initializer=create_initializer(
-                                                           self._initializer_range))
+                                                           self._initializer_range),
+                                                       dtype=dtype)
 
         self._position_embeddings = keras.layers.Embedding(input_dim=max_position_embeddings,
                                                            output_dim=hidden_size,
                                                            embeddings_initializer=create_initializer(
-                                                               self._initializer_range))
+                                                               self._initializer_range),
+                                                           dtype=dtype)
 
         self._segment_embeddings = keras.layers.Embedding(input_dim=type_vocab_size, output_dim=hidden_size,
                                                           embeddings_initializer=create_initializer(
-                                                              self._initializer_range))
+                                                              self._initializer_range),
+                                                          dtype=dtype)
         self._dropout = dropout(hidden_dropout_prob)
 
     def call(self, inputs, training=None, mask=None):
@@ -125,59 +128,61 @@ class BertEmbeddings(keras.Model):
                      + self._position_embeddings(position_ids) \
                      + self._segment_embeddings(token_type_ids)
 
-        return self.dropout(embeddings, training)
+        return self._dropout(embeddings, training)
 
 
 class BertEncoder(keras.Model):
-    def __init__(self, vocab_size, hidden_size, initializer_range, use_one_hot_embeddings, type_vocab_size,
-                 hidden_dropout_prob, max_position_embeddings, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._vocab_size = vocab_size
-        self._hidden_size = hidden_size
-        self._initializer_range = initializer_range
-        self._use_one_hot_embeddings = use_one_hot_embeddings
-        self._type_vocab_size = type_vocab_size
-        self._hidden_dropout_prob = hidden_dropout_prob
-        self._max_position_embeddings = max_position_embeddings
+    def __init__(self,
+                 hidden_size,
+                 initializer_range,
+                 hidden_dropout_prob,
+                 num_hidden_layers,
+                 num_attention_heads,
+                 intermediate_size,
+                 hidden_act,
+                 attention_probs_dropout_prob,
+                 dtype,
+                 *args, **kwargs):
+        super().__init__()
+        self._dtype = dtype
+
+        self.multilayer_transformer = MultilayerTransformer(
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            intermediate_size=intermediate_size,
+            intermediate_act_fn=get_activation(hidden_act),
+            hidden_dropout_prob=hidden_dropout_prob,
+            attention_probs_dropout_prob=attention_probs_dropout_prob,
+            initializer_range=initializer_range,
+            do_return_all_layers=True,
+            dtype=dtype)
 
     def call(self, inputs, training=None, mask=None):
         input_ids = inputs[0]
         input_mask = inputs[1]
-        attention_mask = create_attention_mask_from_input_mask(
-            input_ids, input_mask)
+
+        # attention_mask = create_attention_mask_from_input_mask(input_ids, input_mask, dtype=self._dtype)
 
         # Run the stacked transformer.
         # `sequence_output` shape = [batch_size, seq_length, hidden_size].
-        all_encoder_layers = transformer_model(
-            input_tensor=self.embedding_output,
-            attention_mask=attention_mask,
-            hidden_size=self._hidden_size,
-            num_hidden_layers=self.num_hidden_layers,
-            num_attention_heads=self._num_attention_heads,
-            intermediate_size=self._intermediate_size,
-            intermediate_act_fn=get_activation(self._hidden_act),
-            hidden_dropout_prob=self._hidden_dropout_prob,
-            attention_probs_dropout_prob=self._attention_probs_dropout_prob,
-            initializer_range=self._initializer_range,
-            do_return_all_layers=True)
-
-        return all_encoder_layers
+        return self.multilayer_transformer(input_ids)
 
 
 class BertPooler(keras.Model):
-    def __init__(self, hidden_size, initializer_range, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, hidden_size, initializer_range, dtype, *args, **kwargs):
+        super().__init__()
         self._hidden_size = hidden_size
         self._initializer_range = initializer_range
 
+        self.pooled_dense = keras.layers.Dense(units=hidden_size,
+                                               activation=tf.tanh,
+                                               kernel_initializer=create_initializer(initializer_range),
+                                               dtype=dtype)
+
     def call(self, inputs, training=None, mask=None):
         first_token_tensor = tf.squeeze(inputs[:, 0:1, :], axis=1)
-        pooled_output = keras.Dense(
-            first_token_tensor,
-            self._hidden_size,
-            activation=tf.tanh,
-            kernel_initializer=create_initializer(self._initializer_range))
-        return pooled_output
+        return self.pooled_dense(first_token_tensor)
 
 
 class BertModel(keras.Model):
@@ -188,10 +193,11 @@ class BertModel(keras.Model):
                  is_training,
                  batch_size,
                  seq_length,
+                 dtype,
                  use_one_hot_embeddings=False,
                  *args,
                  **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         config = copy.deepcopy(config)
         if not is_training:
             config.hidden_dropout_prob = 0.0
@@ -199,10 +205,11 @@ class BertModel(keras.Model):
 
         self._batch_size = batch_size
         self._seq_length = seq_length
+        self._dtype = dtype
 
-        self.embeddings = BertEmbeddings(use_one_hot_embeddings=use_one_hot_embeddings, **config.__dict__)
-        self.encoder = BertEncoder(use_one_hot_embeddings=use_one_hot_embeddings, **config.__dict__)
-        self.pooler = BertPooler(**config.__dict__)
+        self.embeddings = BertEmbeddings(use_one_hot_embeddings=use_one_hot_embeddings, dtype=dtype, **config.__dict__)
+        self.encoder = BertEncoder(use_one_hot_embeddings=use_one_hot_embeddings, dtype=dtype, **config.__dict__)
+        self.pooler = BertPooler(dtype=dtype, **config.__dict__)
 
     def call(self, inputs, training=None, mask=None):
         input_ids = inputs['input_ids']
@@ -210,11 +217,13 @@ class BertModel(keras.Model):
         position_ids = inputs['position_ids']
         token_type_ids = inputs['segment_ids']
 
+        int_dtype = tf.int32 if self._dtype is tf.float32 else tf.int16
+
         if input_mask is None:
-            input_mask = tf.ones(shape=[self._batch_size, self._seq_length], dtype=tf.int32)
+            input_mask = tf.ones(shape=[self._batch_size, self._seq_length], dtype=int_dtype)
 
         if token_type_ids is None:
-            token_type_ids = tf.zeros(shape=[self._batch_size, self._seq_length], dtype=tf.int32)
+            token_type_ids = tf.zeros(shape=[self._batch_size, self._seq_length], dtype=int_dtype)
 
         x = self.embeddings([input_ids, position_ids, token_type_ids])
         x = self.encoder([x, input_mask])
@@ -432,8 +441,7 @@ def create_initializer(initializer_range=0.02):
     #             shape=[token_type_vocab_size, width],
     #             initializer=create_initializer(initializer_range))
     #         This vocab will be small so we always do one-hot here, since it is always
-    #         faster for a small vocabulary.
-    # flat_token_type_ids = tf.reshape(token_type_ids, [-1])
+    #         faster for a small vocabulary. # flat_token_type_ids = tf.reshape(token_type_ids, [-1])
     # one_hot_ids = tf.one_hot(flat_token_type_ids, depth=token_type_vocab_size)
     # token_type_embeddings = tf.matmul(one_hot_ids, token_type_table)
     # token_type_embeddings = tf.reshape(token_type_embeddings,
@@ -477,7 +485,7 @@ def create_initializer(initializer_range=0.02):
 # return output
 
 
-def create_attention_mask_from_input_mask(from_tensor, to_mask):
+def create_attention_mask_from_input_mask(from_tensor, to_mask, dtype):
     """Create 3D attention mask from a 2D tensor mask.
 
     Args:
@@ -495,7 +503,7 @@ def create_attention_mask_from_input_mask(from_tensor, to_mask):
     to_seq_length = to_shape[1]
 
     to_mask = tf.cast(
-        tf.reshape(to_mask, [batch_size, 1, to_seq_length]), tf.float32)
+        tf.reshape(to_mask, [batch_size, 1, to_seq_length]), dtype=dtype)
 
     # We don't assume that `from_tensor` is a mask (although it could be). We
     # don't actually care if we attend *from* padding tokens (only *to* padding)
@@ -503,7 +511,7 @@ def create_attention_mask_from_input_mask(from_tensor, to_mask):
     #
     # `broadcast_ones` = [batch_size, from_seq_length, 1]
     broadcast_ones = tf.ones(
-        shape=[batch_size, from_seq_length, 1], dtype=tf.float32)
+        shape=[batch_size, from_seq_length, 1], dtype=dtype)
 
     # Here we broadcast along two dimensions to create the mask.
     mask = broadcast_ones * to_mask
@@ -584,7 +592,7 @@ class Attention(keras.Model):
                  to_seq_length=None,
                  dtype=tf.float32,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self._attention_mask = attention_mask
         self._num_attention_heads = num_attention_heads
         self._size_per_head = size_per_head
@@ -593,6 +601,7 @@ class Attention(keras.Model):
         self._batch_size = batch_size
         self._from_seq_length = from_seq_length
         self._to_seq_length = to_seq_length
+        self._initializer_range = initializer_range
         self._dtype = dtype
 
         dense_units = num_attention_heads * size_per_head
@@ -741,7 +750,7 @@ class TransformerNormalizedSelfAttention(Attention):
         self.normalize = layer_norm()
 
     def call(self, inputs, training=None, mask=None):
-        layer_input = inputs[0]
+        layer_input = inputs
 
         attention_output = super().call([layer_input, layer_input], training)
         attention_output = self.dense_output(attention_output)
@@ -759,7 +768,7 @@ class TransformerOutputDense(keras.Model):
                  intermediate_act_fn=gelu,
                  dtype=tf.float32,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         # The activation is only applied to the "intermediate" hidden layer.
         self.dense_intermediate = keras.layers.Dense(units=hidden_size_intermediate,
@@ -775,7 +784,7 @@ class TransformerOutputDense(keras.Model):
         self.normalize = layer_norm()
 
     def call(self, inputs, training=None, mask=None):
-        layer_input = inputs[0]
+        layer_input = inputs
 
         intermediate_output = self.dense_intermediate(layer_input)
 
@@ -798,7 +807,7 @@ class Transformer(keras.Model):
                  initializer_range=0.02,
                  dtype=tf.float32,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         self.attention = TransformerNormalizedSelfAttention(
             attention_mask=attention_mask,
@@ -817,7 +826,7 @@ class Transformer(keras.Model):
             dtype=dtype)
 
     def call(self, inputs, training=None, mask=None):
-        input_tensor = inputs[0]
+        input_tensor = inputs
         x = self.attention(input_tensor)
         x = self.dense(x)
         return x
@@ -874,7 +883,7 @@ class MultilayerTransformer(keras.Model):
                  initializer_range=0.02,
                  do_return_all_layers=False,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         if hidden_size % num_attention_heads != 0:
             raise ValueError(
@@ -895,7 +904,7 @@ class MultilayerTransformer(keras.Model):
                                                dtype=tf.float32) for _ in range(num_hidden_layers)]
 
     def call(self, inputs, training=None, mask=None):
-        input_tensor = inputs[0]
+        input_tensor = inputs
 
         input_shape = get_shape_list(input_tensor, expected_rank=3)
         batch_size = input_shape[0]
@@ -912,7 +921,8 @@ class MultilayerTransformer(keras.Model):
         # forth from a 3D tensor to a 2D tensor. Re-shapes are normally free on
         # the GPU/CPU but may not be free on the TPU, so we want to minimize them to
         # help the optimizer.
-        prev_output = reshape_to_matrix(input_tensor)
+        # prev_output = reshape_to_matrix(input_tensor)
+        prev_output = input_tensor
 
         all_layer_outputs = []
 
@@ -947,8 +957,9 @@ def get_shape_list(tensor, expected_rank=None, name=None):
       be returned as python integers, and dynamic dimensions will be returned
       as tf.Tensor scalars.
     """
-    if name is None:
-        name = tensor.name
+
+    # if name is None:
+    #     name = tensor.name
 
     if expected_rank is not None:
         assert_rank(tensor, expected_rank, name)
@@ -1007,8 +1018,8 @@ def assert_rank(tensor, expected_rank, name=None):
     Raises:
       ValueError: If the expected shape doesn't match the actual shape.
     """
-    if name is None:
-        name = tensor.name
+    # if name is None:
+    #     name = tensor.name
 
     expected_rank_dict = {}
     if isinstance(expected_rank, six.integer_types):
@@ -1019,8 +1030,7 @@ def assert_rank(tensor, expected_rank, name=None):
 
     actual_rank = tensor.shape.ndims
     if actual_rank not in expected_rank_dict:
-        scope_name = tf.get_variable_scope().name
+        # scope_name = tf.get_variable_scope().name
         raise ValueError(
-            "For the tensor `%s` in scope `%s`, the actual rank "
-            "`%d` (shape = %s) is not equal to the expected rank `%s`" %
-            (name, scope_name, actual_rank, str(tensor.shape), str(expected_rank)))
+            f"For the tensor, the actual rank "
+            f"{actual_rank} (shape = {str(tensor.shape)}) is not equal to the expected rank {str(expected_rank)}")

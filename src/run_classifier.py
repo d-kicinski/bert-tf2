@@ -5,6 +5,7 @@ from bert import modeling
 from bert import optimization
 from bert import tokenization
 import tensorflow as tf
+from tensorflow.python import keras
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -499,16 +500,16 @@ class BertTextClassifier(tf.keras.Model):
     """Creates a classification model."""
 
     def __init__(self, bert_config, is_training,
-                 labels, num_labels, use_one_hot_embeddings):
+                 labels, num_labels, use_one_hot_embeddings, dtype):
         super(BertTextClassifier, self).__init__()
 
         self.bert_model = modeling.BertModel(
             config=bert_config,
             is_training=is_training,
-            use_one_hot_embeddings=use_one_hot_embeddings, batch_size=16, seq_length=30)
+            use_one_hot_embeddings=use_one_hot_embeddings, batch_size=16, seq_length=30, dtype=dtype)
 
-        self.dropout = tf.keras.layers.Dropout(0.5)
-        self.dense = tf.keras.layers.Dense(num_labels, activation=tf.nn.softmax)
+        self.dropout = keras.layers.Dropout(0.5)
+        self.dense = keras.layers.Dense(num_labels, activation=tf.nn.softmax, dtype=dtype)
 
     def call(self, inputs):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
@@ -756,7 +757,8 @@ def main():
                               is_training=True,
                               num_labels=len(label_list),
                               labels=label_list,
-                              use_one_hot_embeddings=False)
+                              use_one_hot_embeddings=False,
+                              dtype=tf.float32)
 
     train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
     file_based_convert_examples_to_features(
