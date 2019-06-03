@@ -195,6 +195,7 @@ class BertModel(keras.Model):
                  seq_length,
                  dtype,
                  use_one_hot_embeddings=False,
+                 get_pooled_output=True,
                  *args,
                  **kwargs):
         super().__init__()
@@ -206,6 +207,8 @@ class BertModel(keras.Model):
         self._batch_size = batch_size
         self._seq_length = seq_length
         self._dtype = dtype
+
+        self.get_pooled_output = get_pooled_output
 
         self.embeddings = BertEmbeddings(use_one_hot_embeddings=use_one_hot_embeddings, dtype=dtype, **config.__dict__)
         self.encoder = BertEncoder(use_one_hot_embeddings=use_one_hot_embeddings, dtype=dtype, **config.__dict__)
@@ -225,9 +228,12 @@ class BertModel(keras.Model):
         if token_type_ids is None:
             token_type_ids = tf.zeros(shape=[self._batch_size, self._seq_length], dtype=int_dtype)
 
-        x = self.embeddings([input_ids, position_ids, token_type_ids])
-        x = self.encoder([x, input_mask])
-        return self.pooler(x)
+        x_embds = self.embeddings([input_ids, position_ids, token_type_ids])
+        x_encoder = self.encoder([x_embds, input_mask])
+        if self.get_pooled_output:
+            return self.pooler(x_encoder[-1])
+        else:
+            return x_encoder
 
 
 def gelu(x):
