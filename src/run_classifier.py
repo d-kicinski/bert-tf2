@@ -5,7 +5,7 @@ from bert import modeling
 from bert import optimization
 from bert import tokenization
 import tensorflow as tf
-from tensorflow.python import keras
+from tensorflow import keras
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -378,7 +378,6 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
 
     positional_ids = list(range(len(input_ids)))
 
-
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
     input_mask = [1] * len(input_ids)
@@ -472,7 +471,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
             d = d.repeat()
             d = d.shuffle(buffer_size=100)
 
-        d = d.map(lambda record: _decode_record(record, name_to_features)).batch(batch_size=16)
+        d = d.map(lambda record: _decode_record(record, name_to_features)).batch(batch_size=5000)  # xd
 
         return d
 
@@ -499,28 +498,36 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 class BertTextClassifier(tf.keras.Model):
     """Creates a classification model."""
 
-    def __init__(self, bert_config, is_training,
-                 labels, num_labels, use_one_hot_embeddings, dtype):
-        super(BertTextClassifier, self).__init__()
+    def __init__(self, bert_config, is_training, labels, num_labels, use_one_hot_embeddings,
+                 batch_size=16, seq_length=30, dropout_prob=0.1, dtype=tf.float32):
+        super().__init__()
 
         self.bert_model = modeling.BertModel(
             config=bert_config,
             is_training=is_training,
-            use_one_hot_embeddings=use_one_hot_embeddings, batch_size=16, seq_length=30, dtype=dtype)
+            use_one_hot_embeddings=use_one_hot_embeddings,
+            batch_size=batch_size,
+            seq_length=seq_length,
+            dtype=dtype)
 
-        self.dropout = keras.layers.Dropout(0.5)
-        self.dense = keras.layers.Dense(num_labels, activation=tf.nn.softmax, dtype=dtype)
+        self.dropout = keras.layers.Dropout(dropout_prob)
+        self.dense = keras.layers.Dense(num_labels, activation=keras.activations.softmax, dtype=dtype)
 
     def call(self, inputs):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
         x = self.bert_model(inputs)
+        x = self.dropout(x)
         return self.dense(x)
 
-        # with tf.variable_scope("loss"):
-        #     if is_training:
-        # I.e., 0.1
-        # dropout
-        # output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+
+def cross_entropy_loss(y_true, y_pred):
+    return keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=True)
+
+    # with tf.variable_scope("loss"):
+    #     if is_training:
+    # I.e., 0.1
+    # dropout
+    # output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
     #
     # logits = tf.matmul(output_layer, output_weights, transpose_b=True)
     # logits = tf.nn.bias_add(logits, output_bias)
@@ -671,7 +678,7 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
             d = d.repeat()
             d = d.shuffle(buffer_size=100)
 
-        d = d.batch(batch_size=batch_size, drop_remainder=drop_remainder)
+        # d = d.batch(batch_size=batch_size, drop_remainder=drop_remainder)
         return d
 
     return input_fn
@@ -769,11 +776,45 @@ def main():
         is_training=True,
         drop_remainder=True)
 
-    for batch_i, batch in enumerate(train_input_fn()):
-        result = bert(batch)
-        print(f"batch_i: {batch_i}, type: {type(batch)}")
+    dtype = tf.float32
+
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+
+    dataset = [b for b in train_input_fn()]
+
+    bert.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+                 loss=keras.losses.SparseCategoricalCrossentropy(),
+                 metrics=[keras.metrics.SparseCategoricalAccuracy()])
+
+    d = dataset[0]
+
+    bert.fit([d['input_ids'],
+              d['input_mask'],
+              d['position_ids'],
+              d['segment_ids']],
+             d['label_ids'],
+             batch_size=64,
+             epochs=3)
+    # train(bert, dataset, optimizer)
 
     # estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
+
+
+def train(bert, dataset, optimizer, dtype=tf.float32):
+    for batch_i, batch in enumerate(dataset):
+        input_tensors = [
+            batch['input_ids'],
+            batch['input_mask'],
+            batch['position_ids'],
+            batch['token_type_ids'],
+        ]
+
+        with tf.GradientTape() as tape:
+            result = bert(input_tensors)
+            loss = cross_entropy_loss(tf.argmax(result, axis=1), tf.cast(batch['label_ids'], dtype=dtype))
+        gradients = tape.gradient(loss, bert.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, bert.trainable_variables))
+        print(f"batch_i: {batch_i}, type: {type(batch)}")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ import six
 
 import tensorflow as tf
 from tensorflow.python import keras
-import tensorflow_addons as tfa
 from pathlib import Path
 
 
@@ -215,10 +214,10 @@ class BertModel(keras.Model):
         self.pooler = BertPooler(dtype=dtype, **config.__dict__)
 
     def call(self, inputs, training=None, mask=None):
-        input_ids = inputs['input_ids']
-        input_mask = inputs['input_mask']
-        position_ids = inputs['position_ids']
-        token_type_ids = inputs['segment_ids']
+        input_ids = inputs[0]
+        input_mask = inputs[1]
+        position_ids = inputs[2]
+        token_type_ids = inputs[3]
 
         int_dtype = tf.int32 if self._dtype is tf.float32 else tf.int16
 
