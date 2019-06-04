@@ -7,7 +7,8 @@ import numpy as np
 import six
 
 import tensorflow as tf
-from tensorflow.python import keras
+# from tensorflow.python import keras
+from tensorflow import keras
 from pathlib import Path
 
 
@@ -333,7 +334,8 @@ def dropout(dropout_prob):
 
 
 def layer_norm():
-    x = keras.layers.LayerNormalization()
+    x = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+
     return x
 
 

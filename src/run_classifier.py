@@ -23,7 +23,7 @@ class Params:
     max_seq_length: int = 32
     learning_rate: float = 5e-5
     train_epochs: int = 3
-    batch_size: int = 32
+    batch_size: int = 8
     warmup_proportion: float = 0.1
     save_checkpoints_steps: int = 1000
     iterations_per_loop: int = 1000
@@ -471,7 +471,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
             d = d.repeat()
             d = d.shuffle(buffer_size=100)
 
-        d = d.map(lambda record: _decode_record(record, name_to_features)).batch(batch_size=5000)  # xd
+        d = d.map(lambda record: _decode_record(record, name_to_features)).batch(batch_size=FLAGS.batch_size)
 
         return d
 
@@ -495,7 +495,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-class BertTextClassifier(tf.keras.Model):
+class BertTextClassifier(keras.Model):
     """Creates a classification model."""
 
     def __init__(self, bert_config, is_training, labels, num_labels, use_one_hot_embeddings,
@@ -522,24 +522,6 @@ class BertTextClassifier(tf.keras.Model):
 
 def cross_entropy_loss(y_true, y_pred):
     return keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=True)
-
-    # with tf.variable_scope("loss"):
-    #     if is_training:
-    # I.e., 0.1
-    # dropout
-    # output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
-    #
-    # logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-    # logits = tf.nn.bias_add(logits, output_bias)
-    # probabilities = tf.nn.softmax(logits, axis=-1)
-    # log_probs = tf.nn.log_softmax(logits, axis=-1)
-    #
-    # one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
-    #
-    # per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-    # loss = tf.reduce_mean(per_example_loss)
-    #
-    # return (loss, per_example_loss, logits, probabilities)
 
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
@@ -729,36 +711,9 @@ def main():
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
-    # session_config = tf.ConfigProto(allow_soft_placement=True,
-    #                                 intra_op_parallelism_threads=3,
-    #                                 inter_op_parallelism_threads=3)
-    # session_config.gpu_options.allow_growth = True
-
-    # run_config = tf.estimator.RunConfig(
-    #     session_config=session_config,
-    # model_dir=FLAGS.output_dir,
-    # save_checkpoints_steps=FLAGS.save_checkpoints_steps)
-
     train_examples = processor.get_train_examples(FLAGS.data_dir)
     num_train_steps = int(
         len(train_examples) / FLAGS.batch_size * FLAGS.train_epochs)
-    num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
-
-    # model_fn = model_fn_builder(
-    #     bert_config=bert_config,
-    #     num_labels=len(label_list),
-    #     init_checkpoint=FLAGS.init_checkpoint,
-    #     learning_rate=FLAGS.learning_rate,
-    #     num_train_steps=num_train_steps,
-    #     num_warmup_steps=num_warmup_steps,
-    #     use_tpu=False,
-    #     use_one_hot_embeddings=False)
-
-    # If TPU is not available, this will fall back to normal Estimator on CPU
-    # or GPU.
-    # estimator = tf.estimator.Estimator(
-    #     model_fn=model_fn,
-    #     config=run_config)
 
     bert = BertTextClassifier(bert_config=bert_config,
                               is_training=True,
@@ -776,45 +731,27 @@ def main():
         is_training=True,
         drop_remainder=True)
 
-    dtype = tf.float32
-
-    # optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-
-    dataset = [b for b in train_input_fn()]
-
-    bert.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
-                 loss=keras.losses.SparseCategoricalCrossentropy(),
-                 metrics=[keras.metrics.SparseCategoricalAccuracy()])
-
-    d = dataset[0]
-
-    bert.fit([d['input_ids'],
-              d['input_mask'],
-              d['position_ids'],
-              d['segment_ids']],
-             d['label_ids'],
-             batch_size=64,
-             epochs=3)
-    # train(bert, dataset, optimizer)
-
-    # estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+    train(model=bert, dataset=train_input_fn(), optimizer=optimizer)
 
 
-def train(bert, dataset, optimizer, dtype=tf.float32):
+@tf.function
+def train(model, dataset, optimizer, dtype=tf.float32):
     for batch_i, batch in enumerate(dataset):
         input_tensors = [
             batch['input_ids'],
             batch['input_mask'],
             batch['position_ids'],
-            batch['token_type_ids'],
+            batch['segment_ids'],
         ]
 
-        with tf.GradientTape() as tape:
-            result = bert(input_tensors)
+        with tf.GradientTape(persistent=True) as tape:
+            result = model(input_tensors)
             loss = cross_entropy_loss(tf.argmax(result, axis=1), tf.cast(batch['label_ids'], dtype=dtype))
-        gradients = tape.gradient(loss, bert.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, bert.trainable_variables))
-        print(f"batch_i: {batch_i}, type: {type(batch)}")
+
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+        print(f"batch_i: {batch_i}, loss: {loss}")
 
 
 if __name__ == "__main__":
