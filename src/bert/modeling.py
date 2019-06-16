@@ -948,7 +948,6 @@ class MultilayerTransformer(keras.Model):
             final_output = reshape_from_matrix(prev_output, input_shape)
             return final_output
 
-
 def get_shape_list(tensor, expected_rank=None, name=None):
     """Returns a list of the shape of tensor, preferring static dimensions.
 

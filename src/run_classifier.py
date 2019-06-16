@@ -512,17 +512,17 @@ class BertTextClassifier(keras.Model):
 
         self.dropout = keras.layers.Dropout(dropout_prob)
         self.dense = keras.layers.Dense(num_labels, activation=keras.activations.softmax, dtype=dtype)
+        self.argmax = tf.keras.layers.Lambda(lambda x: tf.argmax(x, axis=-1))
 
     def call(self, inputs):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
         x = self.bert_model(inputs)
         x = self.dropout(x)
-        return self.dense(x)
-
+        x = self.dense(x)
+        return x
 
 def cross_entropy_loss(y_true, y_pred):
-    return keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=True)
-
+    return tf.reduce_mean(tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=False))
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
@@ -732,10 +732,11 @@ def main():
         drop_remainder=True)
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+
     train(model=bert, dataset=train_input_fn(), optimizer=optimizer)
 
 
-@tf.function
+# @tf.function
 def train(model, dataset, optimizer, dtype=tf.float32):
     for batch_i, batch in enumerate(dataset):
         input_tensors = [
@@ -747,11 +748,16 @@ def train(model, dataset, optimizer, dtype=tf.float32):
 
         with tf.GradientTape(persistent=True) as tape:
             result = model(input_tensors)
-            loss = cross_entropy_loss(tf.argmax(result, axis=1), tf.cast(batch['label_ids'], dtype=dtype))
+            labels = tf.keras.utils.to_categorical(batch['label_ids'], num_classes=3)
+            loss = cross_entropy_loss(y_pred=tf.cast(result, dtype=dtype), y_true=tf.cast(labels, dtype=dtype))
 
-        gradients = tape.gradient(loss, model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-        print(f"batch_i: {batch_i}, loss: {loss}")
+        trainable_variables = model.trainable_variables
+
+        gradients = tape.gradient(loss, trainable_variables)
+        grad_global_norm = tf.linalg.global_norm(gradients)
+        optimizer.apply_gradients(zip(gradients, trainable_variables))
+
+        print(f"batch_i: {batch_i}, loss: {loss}, grad_global_norm: {grad_global_norm}")
 
 
 if __name__ == "__main__":
