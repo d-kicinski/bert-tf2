@@ -105,18 +105,22 @@ class BertEmbeddings(keras.Model):
         self._word_embeddings = keras.layers.Embedding(input_dim=vocab_size, output_dim=hidden_size,
                                                        embeddings_initializer=create_initializer(
                                                            self._initializer_range),
+                                                       name="word_embeddings",
                                                        dtype=dtype)
+
+        self._segment_embeddings = keras.layers.Embedding(input_dim=type_vocab_size, output_dim=hidden_size,
+                                                          embeddings_initializer=create_initializer(
+                                                              self._initializer_range),
+                                                          name="segment_embeddings",
+                                                          dtype=dtype)
 
         self._position_embeddings = keras.layers.Embedding(input_dim=max_position_embeddings,
                                                            output_dim=hidden_size,
                                                            embeddings_initializer=create_initializer(
                                                                self._initializer_range),
+                                                           name="position_embeddings",
                                                            dtype=dtype)
 
-        self._segment_embeddings = keras.layers.Embedding(input_dim=type_vocab_size, output_dim=hidden_size,
-                                                          embeddings_initializer=create_initializer(
-                                                              self._initializer_range),
-                                                          dtype=dtype)
         self._dropout = dropout(hidden_dropout_prob)
 
     def call(self, inputs, training=None, mask=None):

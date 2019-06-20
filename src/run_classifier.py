@@ -1,15 +1,21 @@
 import collections
 import csv
 import os
-from bert import modeling
-from bert import optimization
-from bert import tokenization
+import argparse
+import sys
+import logging
+
 import tensorflow as tf
 from tensorflow import keras
 from dataclasses import dataclass
 from pathlib import Path
 
-import argparse
+from bert import modeling
+from bert import optimization
+from bert import tokenization
+from utils import CheckpointLoader
+
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 
 @dataclass
@@ -497,7 +503,6 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 class BertTextClassifier(keras.Model):
     """Creates a classification model."""
-
     def __init__(self, bert_config, is_training, labels, num_labels, use_one_hot_embeddings,
                  batch_size=16, seq_length=30, dropout_prob=0.1, dtype=tf.float32):
         super().__init__()
@@ -731,9 +736,16 @@ def main():
         is_training=True,
         drop_remainder=True)
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+    batch_i, batch = enumerate(train_input_fn()).__next__()
+    input_tensors = [batch['input_ids'], batch['input_mask'], batch['position_ids'], batch['segment_ids']]
+    result = bert(input_tensors)
 
-    train(model=bert, dataset=train_input_fn(), optimizer=optimizer)
+    CheckpointLoader.load_google_bert(model=bert,
+                                      max_sequence_length=FLAGS.max_seq_length,
+                                      init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"))
+
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+    # train(model=bert, dataset=train_input_fn(), optimizer=optimizer)
 
 
 # @tf.function
@@ -753,11 +765,11 @@ def train(model, dataset, optimizer, dtype=tf.float32):
 
         trainable_variables = model.trainable_variables
 
-        gradients = tape.gradient(loss, trainable_variables)
-        grad_global_norm = tf.linalg.global_norm(gradients)
-        optimizer.apply_gradients(zip(gradients, trainable_variables))
-
-        print(f"batch_i: {batch_i}, loss: {loss}, grad_global_norm: {grad_global_norm}")
+        # gradients = tape.gradient(loss, trainable_variables)
+        # grad_global_norm = tf.linalg.global_norm(gradients)
+        # optimizer.apply_gradients(zip(gradients, trainable_variables))
+        #
+        # print(f"batch_i: {batch_i}, loss: {loss}, grad_global_norm: {grad_global_norm}")
 
 
 if __name__ == "__main__":
