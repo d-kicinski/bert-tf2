@@ -503,6 +503,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 class BertTextClassifier(keras.Model):
     """Creates a classification model."""
+
     def __init__(self, bert_config, is_training, labels, num_labels, use_one_hot_embeddings,
                  batch_size=16, seq_length=30, dropout_prob=0.1, dtype=tf.float32):
         super().__init__()
@@ -516,8 +517,10 @@ class BertTextClassifier(keras.Model):
             dtype=dtype)
 
         self.dropout = keras.layers.Dropout(dropout_prob)
-        self.dense = keras.layers.Dense(num_labels, activation=keras.activations.softmax, dtype=dtype)
-        self.argmax = tf.keras.layers.Lambda(lambda x: tf.argmax(x, axis=-1))
+        self.dense = keras.layers.Dense(num_labels,
+                                        activation=keras.activations.softmax,
+                                        name="dense",
+                                        dtype=dtype)
 
     def call(self, inputs):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
@@ -526,8 +529,17 @@ class BertTextClassifier(keras.Model):
         x = self.dense(x)
         return x
 
+    def call(self, inputs):
+        # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
+        x = self.bert_model(inputs)
+        x = self.dropout(x)
+        x = self.dense(x)
+        return x
+
+
 def cross_entropy_loss(y_true, y_pred):
     return tf.reduce_mean(tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=False))
+
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
@@ -741,7 +753,7 @@ def main():
     result = bert(input_tensors)
 
     CheckpointLoader.load_google_bert(model=bert,
-                                      max_sequence_length=FLAGS.max_seq_length,
+                                      max_seq_len=FLAGS.max_seq_length,
                                       init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"))
 
     # optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
