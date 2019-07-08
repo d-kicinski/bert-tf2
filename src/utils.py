@@ -34,7 +34,8 @@ class CheckpointLoader:
     def load_google_bert(model: BertModel,
                          init_checkpoint: str,
                          max_seq_len: int,
-                         layer_num: int = 12):
+                         layer_num: int = 12,
+                         verbose: bool = False):
 
         var_names = tf.train.list_variables(init_checkpoint)
         checkpoint = tf.train.load_checkpoint(init_checkpoint)
@@ -126,7 +127,8 @@ class CheckpointLoader:
 
             if w_id is not None and qkv is None:
                 try:
-                    print(f"w_id: {w_id}\t{w_id - first_vars_size}", var_name, ' -> ', model.weights[w_id].name)
+                    if verbose:
+                        print(f"w_id: {w_id}\t{w_id - first_vars_size}", var_name, ' -> ', model.weights[w_id].name)
                 except IndexError:
                     pass
                 if w_id in [0, 1, 2]:  # embeddings
@@ -140,7 +142,8 @@ class CheckpointLoader:
                     else:
                         weights[w_id][:] = checkpoint.get_tensor(var_name)
             elif w_id is not None:
-                print(f"w_id: {w_id}\t{w_id - first_vars_size}", var_name, ' -> ', model.weights[w_id].name)
+                if verbose:
+                    print(f"w_id: {w_id}\t{w_id - first_vars_size}", var_name, ' -> ', model.weights[w_id].name)
                 p = {'q': 0, 'k': 1, 'v': 2}[qkv]
                 if weights[w_id].ndim == 3:
                     dim_size = weights[w_id].shape[1]
@@ -153,7 +156,8 @@ class CheckpointLoader:
                     # weights[w_id][p * dim_size:(p + 1) * dim_size] = checkpoint.get_tensor(var_name)
                     weights[w_id] = checkpoint.get_tensor(var_name)
             else:
-                print('not mapped: ', var_name)
+                if verbose:
+                    print('not mapped: ', var_name)
         model.set_weights(weights)
         return model
 #

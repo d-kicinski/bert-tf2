@@ -4,10 +4,14 @@ import argparse
 import sys
 import logging
 
+from pathlib import Path
+from dataclasses import dataclass
+from typing import *
+
 import tensorflow as tf
 from tensorflow import keras
-from dataclasses import dataclass
-from pathlib import Path
+
+from sklearn.metrics import f1_score
 
 from bert import modeling
 from bert import optimization
@@ -18,6 +22,7 @@ import datautils
 # logging.getLogger().setLevel(logging.DEBUG)
 
 EXAMPLES_NUM_MRPC = 3668
+
 
 @dataclass
 class Params:
@@ -30,10 +35,8 @@ class Params:
     max_seq_length: int = 128
     learning_rate: float = 2e-5
     train_epochs: int = 3
-    batch_size: int = 32
+    batch_size: int = 16
     warmup_proportion: float = 0.1
-    save_checkpoints_steps: int = 1000
-    iterations_per_loop: int = 1000
     do_lower_case: bool = True
 
 
@@ -50,8 +53,6 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=Params.learning_rate)
     parser.add_argument('--train_epochs', type=int, default=Params.train_epochs)
     parser.add_argument('--warmup_proportion', type=float, default=Params.warmup_proportion)
-    parser.add_argument('--save_checkpoints_steps', type=int, default=Params.save_checkpoints_steps)
-    parser.add_argument('--iterations_per_loop', type=int, default=Params.iterations_per_loop)
 
     parser.add_argument('--do_lower_case', default=Params.do_lower_case, type=lambda x: (str(x).lower() == 'true'))
 
@@ -123,7 +124,6 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
         # For eval, we want no shuffling and parallel reading doesn't matter.
         d = tf.data.TFRecordDataset(input_file)
         if is_training:
-            d = d.repeat()
             d = d.shuffle(buffer_size=100)
 
         d = d.map(lambda record: _decode_record(record, name_to_features)).batch(batch_size=FLAGS.batch_size)
@@ -153,14 +153,7 @@ class BertTextClassifier(keras.Model):
                                         name="dense",
                                         dtype=dtype)
 
-    def call(self, inputs):
-        # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
-        x = self.bert_model(inputs)
-        x = self.dropout(x)
-        x = self.dense(x)
-        return x
-
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         # input_ids, input_mask, segment_ids = inputs[0], inputs[1], inputs[2]
         x = self.bert_model(inputs)
         x = self.dropout(x)
@@ -169,11 +162,27 @@ class BertTextClassifier(keras.Model):
 
 
 def cross_entropy_loss(y_true, y_pred):
-    return tf.reduce_mean(tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=True))
+    # return tf.reduce_mean(tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=False))
+
+    return tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=False)
+
+
+def setup_tensorflow():
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
 
 
 def main():
     sanity_check()
+    setup_tensorflow()
 
     processors = {
         "cola": datautils.ColaProcessor,
@@ -206,7 +215,6 @@ def main():
     assert len(train_examples) == EXAMPLES_NUM_MRPC
     num_train_steps = int(len(train_examples) / FLAGS.batch_size * FLAGS.train_epochs)
 
-
     train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
     file_based_convert_examples_to_features(train_examples,
                                             label_list,
@@ -219,52 +227,108 @@ def main():
                                                  is_training=True,
                                                  drop_remainder=True)
 
+    test_examples = processor.get_test_examples(FLAGS.data_dir)
+    test_file = os.path.join(FLAGS.output_dir, "test.tf_record")
+    file_based_convert_examples_to_features(test_examples,
+                                            label_list,
+                                            FLAGS.max_seq_length,
+                                            tokenizer,
+                                            test_file)
+    test_input_fn = file_based_input_fn_builder(input_file=test_file,
+                                                seq_length=FLAGS.max_seq_length,
+                                                is_training=False,
+                                                drop_remainder=True)
+
     batch_i, batch = enumerate(train_input_fn()).__next__()
     input_tensors = [batch['input_ids'], batch['input_mask'], batch['position_ids'], batch['segment_ids']]
 
-    with tf.device("gpu:0"):
-        bert = BertTextClassifier(bert_config=bert_config,
-                                  is_training=True,
-                                  num_labels=len(label_list),
-                                  use_one_hot_embeddings=False,
-                                  dtype=tf.float32)
-        _ = bert(input_tensors)
+    bert = BertTextClassifier(bert_config=bert_config,
+                              is_training=True,
+                              num_labels=len(label_list),
+                              use_one_hot_embeddings=False,
+                              dtype=tf.float32)
+    _ = bert(input_tensors)
 
-        CheckpointLoader.load_google_bert(model=bert,
-                                          max_seq_len=FLAGS.max_seq_length,
-                                          init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"))
+    CheckpointLoader.load_google_bert(model=bert,
+                                      max_seq_len=FLAGS.max_seq_length,
+                                      init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"),
+                                      verbose=False)
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-        train(model=bert, dataset=train_input_fn(), optimizer=optimizer, output_dim=len(label_list))
+    optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
+    train(model=bert, dataset_train=train_input_fn(), optimizer=optimizer, output_dim=len(label_list),
+          epochs=Params.train_epochs)
+
+    tf.saved_model.save(bert, os.path.join(Params.output_dir, "checkpoint"))
 
 
 def sanity_check():
-    print("GPU Available: ", tf.test.is_gpu_available())
+    print("Sanity checks:")
+    print("\tGPU Available: ", tf.test.is_gpu_available())
+    print("\tLD_LIBRARY_PATH: ", os.environ['LD_LIBRARY_PATH'])
 
 
-# @tf.function
-def train(model: keras.Model, dataset: tf.data.Dataset, optimizer: keras.optimizers.Optimizer, output_dim: int,
-          dtype=tf.float32):
+def evaluate(model: keras.Model, dataset: tf.data.Dataset) -> float:
+    results = []
+    labels = []
     for batch_i, batch in enumerate(dataset):
-        input_tensors = [
-            batch['input_ids'],
-            batch['input_mask'],
-            batch['position_ids'],
-            batch['segment_ids'],
-        ]
+        input_tensors = [batch['input_ids'],
+                         batch['input_mask'],
+                         batch['position_ids'],
+                         batch['segment_ids']]
 
-        with tf.GradientTape(persistent=True) as tape:
-            result = model(input_tensors)
-            labels = tf.keras.utils.to_categorical(batch['label_ids'], num_classes=output_dim)
-            loss = cross_entropy_loss(y_pred=tf.cast(result, dtype=dtype), y_true=tf.cast(labels, dtype=dtype))
+        result = model(input_tensors)
+        max_probs = tf.math.argmax(result, axis=-1)
 
-        trainable_variables = model.trainable_variables
+        results.extend(max_probs)
+        labels.extend(batch['label_ids'])
+    return f1_score(y_true=labels, y_pred=results)
 
-        gradients = tape.gradient(loss, trainable_variables)
-        grad_global_norm = tf.linalg.global_norm(gradients)
-        optimizer.apply_gradients(zip(gradients, trainable_variables))
 
-        print(f"batch_i: {batch_i}, loss: {loss}, grad_global_norm: {grad_global_norm}")
+@tf.function
+def train_step(model, optimizer, loss_fn, input_tensors, labels, dtype):
+    with tf.GradientTape(persistent=False) as tape:
+        prediction = model(input_tensors)
+        loss = loss_fn(labels, prediction)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    grad_global_norm = tf.linalg.global_norm(gradients)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+    return loss, grad_global_norm
+
+
+def train(model: keras.Model,
+          dataset_train: tf.data.Dataset,
+          optimizer: keras.optimizers.Optimizer,
+          output_dim: int,
+          epochs: int,
+          dtype=tf.float32):
+    avg_loss = tf.keras.metrics.Mean(name='loss', dtype=dtype)
+    avg_grad_norm = tf.keras.metrics.Mean(name='grad_norm', dtype=dtype)
+    log_frequency = 100
+
+    writer = tf.summary.create_file_writer(Params.output_dir)
+    compute_loss = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
+
+    with writer.as_default():
+        for batch_i, batch in enumerate(dataset_train.repeat(epochs)):
+            input_tensors = [batch['input_ids'],
+                             batch['input_mask'],
+                             batch['position_ids'],
+                             batch['segment_ids']]
+            labels = tf.one_hot(indices=batch['label_ids'], depth=output_dim)
+            loss, grad_norm = train_step(model, optimizer, compute_loss, input_tensors, labels, dtype)
+            avg_loss.update_state(loss)
+            avg_grad_norm.update_state(grad_norm)
+
+            if tf.equal(optimizer.iterations % log_frequency, 0):
+                tf.print(f"batch_i: {batch_i + 1}, loss: {loss}")
+                tf.summary.scalar('loss', avg_loss.result(), step=optimizer.iterations)
+                tf.summary.scalar('grad_norm', avg_grad_norm.result(), step=optimizer.iterations)
+                avg_loss.reset_states()
+                avg_grad_norm.reset_states()
+
+            if tf.equal(optimizer.iterations % log_frequency, EXAMPLES_NUM_MRPC):
+                model.save_weights(os.path.join(Params.output_dir, f"model.cpkt-{optimizer.iterations}"))
 
 
 if __name__ == "__main__":
