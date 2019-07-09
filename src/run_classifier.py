@@ -1,23 +1,19 @@
-import collections
-import os
 import argparse
-import sys
+import collections
 import logging
-
+import os
 from pathlib import Path
-from dataclasses import dataclass
-from typing import *
 
 import tensorflow as tf
+from dataclasses import dataclass
+from sklearn.metrics import f1_score
 from tensorflow import keras
 
-from sklearn.metrics import f1_score
-
-from bert import modeling
-from bert import optimization
-from bert import tokenization
-from utils import CheckpointLoader
 import datautils
+from bert import modeling
+from bert import tokenization
+from optimizers import AdamWeightDecayOptimizer, PolynomialDecayWithWarmup
+from utils import CheckpointLoader
 
 # logging.getLogger().setLevel(logging.DEBUG)
 
@@ -33,8 +29,8 @@ class Params:
     output_dir: str = "output/dev_mrpc"
     init_checkpoint: str = "resources/models/uncased_L-12_H-768_A-12"
     max_seq_length: int = 128
-    learning_rate: float = 2e-5
-    train_epochs: int = 3
+    learning_rate: float = 1e-6
+    train_epochs: int = 6
     batch_size: int = 16
     warmup_proportion: float = 0.1
     do_lower_case: bool = True
@@ -249,16 +245,26 @@ def main():
                               dtype=tf.float32)
     _ = bert(input_tensors)
 
-    CheckpointLoader.load_google_bert(model=bert,
-                                      max_seq_len=FLAGS.max_seq_length,
-                                      init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"),
-                                      verbose=False)
+    bert = CheckpointLoader.load_google_bert(model=bert,
+                                             max_seq_len=FLAGS.max_seq_length,
+                                             init_checkpoint=os.path.join(FLAGS.init_checkpoint, "bert_model.ckpt"),
+                                             verbose=False)
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
+    optimizer = AdamWeightDecayOptimizer(
+        learning_rate=PolynomialDecayWithWarmup(initial_learning_rate=Params.learning_rate,
+                                                end_learning_rate=0.0,
+                                                grow_steps=int(num_train_steps * Params.warmup_proportion),
+                                                decay_steps=num_train_steps,
+                                                name="PolynomialDecayWithWarmup"),
+        weight_decay_rate=0.01,
+        beta_1=0.9,
+        beta_2=0.999,
+        epsilon=1e-6,
+        exclude_from_weight_decay=["LayerNorm", "layer_norm", "bias"],
+        name="AdamWeightDecayOptimizer")
+
     train(model=bert, dataset_train=train_input_fn(), optimizer=optimizer, output_dim=len(label_list),
           epochs=Params.train_epochs)
-
-    tf.saved_model.save(bert, os.path.join(Params.output_dir, "checkpoint"))
 
 
 def sanity_check():
@@ -326,9 +332,14 @@ def train(model: keras.Model,
                 tf.summary.scalar('grad_norm', avg_grad_norm.result(), step=optimizer.iterations)
                 avg_loss.reset_states()
                 avg_grad_norm.reset_states()
+                model.save_weights(os.path.join(Params.output_dir, f"model.cpkt-{batch_i}"))
 
-            if tf.equal(optimizer.iterations % log_frequency, EXAMPLES_NUM_MRPC):
-                model.save_weights(os.path.join(Params.output_dir, f"model.cpkt-{optimizer.iterations}"))
+        tf.print(f"batch_i: {batch_i + 1}, loss: {loss}")
+        tf.summary.scalar('loss', avg_loss.result(), step=optimizer.iterations)
+        tf.summary.scalar('grad_norm', avg_grad_norm.result(), step=optimizer.iterations)
+        avg_loss.reset_states()
+        avg_grad_norm.reset_states()
+        model.save_weights(os.path.join(Params.output_dir, f"model.cpkt-{batch_i}"))
 
 
 if __name__ == "__main__":
